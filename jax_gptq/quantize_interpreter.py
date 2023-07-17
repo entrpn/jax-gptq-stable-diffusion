@@ -25,12 +25,12 @@ def tree_size_bytes(tree):
 def quantize(
     fn,
     params,
-    inputs,
-    block_size=128,
+    *inputs,
+    block_size=64,
     actorder=False,
     damping=0.01,
     use_quantized_activations=True,
-    use_fp64=False,
+    use_fp64=True,
     use_params_fp32=False
 ):
     """
@@ -44,16 +44,13 @@ def quantize(
     """
 
     with jax.disable_jit():
-        jaxpr_args = (params, inputs[0])
+        jaxpr_args = (params, *inputs)
         if use_params_fp32:
             jaxpr_args = jax.tree_util.tree_map(
                 lambda x: jax.ShapeDtypeStruct(x.shape, jnp.float32) if x.dtype.kind == 'f' else x,
                 jaxpr_args
             )
         closed_jaxpr = jax.make_jaxpr(fn)(*jaxpr_args)
-    params = jax.device_put(params, jax.devices('cpu')[0])
-    inputs = jax.device_put(inputs, jax.devices('cpu')[0])
-
     argnums = set()
     param_args, param_struct = jax.tree_util.tree_flatten(params)
     input_args = [jax.tree_util.tree_leaves(inp) for inp in inputs]
@@ -114,13 +111,13 @@ def _eval_and_quantize(
     use_params_fp32=False
 ):
     cpu = jax.devices('cpu')[0]
-    gpu = jax.devices('gpu')[0]
+    gpu = jax.devices('tpu')[0]
     # Args are all either params or lists of tensors
 
     quantized_results = {}
     name_to_pos = {}
 
-    n_batches = len(next(a for i, a in enumerate(args) if i not in argnums))
+    n_batches = 1 #len(next(a for i, a in enumerate(args) if i not in argnums))
 
      # Everything in here should be on GPU
     envs = [{} for _ in range(n_batches)]
@@ -128,14 +125,18 @@ def _eval_and_quantize(
     # Map from var name to a tuple of value, original_name, and a stack of transformations to map it back to orig param shape
     param_env = {}
 
+    tmp_index = None
+    tmp_i=0
     for index, name in enumerate(jaxpr.invars):
         if index in argnums:
             param_env[name] = (args[index], name, ())
             name_to_pos[name] = index
         else:
             for i in range(n_batches):
-                envs[i][name] = args[index][i]
-
+                if tmp_index is None:
+                    tmp_index = index
+                envs[0][name] = args[tmp_index][tmp_i]
+                tmp_i+=1
     def delete(name):
         if name not in envs[0]:
             return
@@ -527,7 +528,7 @@ def eval_eqn(eqn, *args):
 
 PRIMITIVE_TO_MATMUL = {
     'dot_general': (dot_general_predicate, handle_dot_general),
-    'conv_general_dilated': (conv_predicate, handle_conv)
+    #'conv_general_dilated': (conv_predicate, handle_conv)
 }
 
 def inverse_transpose(eqn, arg):
