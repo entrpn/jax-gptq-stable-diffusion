@@ -40,9 +40,11 @@ def run(opt):
         )
     
     unet = pipeline.unet
+    # print('unet params:',unet['params'])
 
     prompts = ["Labrador in the style of Hokusai"] * opt.batch_size
     prompt_ids = pipeline.prepare_inputs(prompts)
+    #prompt_ids = shard(prompt_ids)
     neg_prompt_ids = None
 
     prompt_embeds = pipeline.text_encoder(prompt_ids, params=params["text_encoder"])[0]
@@ -102,10 +104,11 @@ def run(opt):
             inp1,inp2,
             encoder_hidden_states=inp3,
         )
-    params['unet'] = jax.device_put(params['unet'], tpu)
-    params['unet'] = jax_gptq.quantize(apply_model, params['unet'],jnp.array(latents_input),
+    quantized_weights = jax_gptq.quantize(apply_model, params['unet'],jnp.array(latents_input),
                                          jnp.array(timestep, dtype=jnp.int32),
                                          context)
+    print(quantized_weights)
+    params['unet'] = quantized_weights
     print("done quantizing")
     print(params['unet']) 
 
